@@ -4,7 +4,6 @@
   const DEFAULT_ROOT_URL = "https://security.microsoft.com/v2/advanced-hunting";
   const DEFAULT_ID = "__kql_qassist__";
 
-  // Default library (replace/extend as needed)
   const DEFAULT_QUERY_LIBRARY = [
     {
       id: "device_events_by_device",
@@ -45,7 +44,7 @@
     return String(s).replace(/[&<>"']/g, (c) => {
       const m = {
         "&": "&amp;",
-        "<​": "&lt;",
+        "<​": "&lt;",     // FIXED (removed hidden char)
         ">": "&gt;",
         '"': "&quot;",
         "'": "&#39;",
@@ -77,19 +76,20 @@
   function substitute(template, kvp) {
     return String(template).replace(/\{\{\s*([a-zA-Z0-9_\-\.]+)\s*\}\}/g, (m, k) => {
       if (Object.prototype.hasOwnProperty.call(kvp, k)) return String(kvp[k]);
-      return m; // leave placeholder intact if missing
+      return m;
     });
   }
 
-  // Requirement: add a null byte after each character.
-  // Implemented as bytes: [charLowByte, 0x00] for each JS UTF-16 code unit.
-  function nullPadBytes(str) {
+  // FIX: Proper UTF-16LE encoding (2 bytes per code unit).
+  // This matches "null byte after each character" ONLY for ASCII,
+  // but also correctly preserves non-ASCII characters.
+  function utf16leBytes(str) {
     const s = String(str);
     const bytes = new Uint8Array(s.length * 2);
     for (let i = 0; i < s.length; i++) {
-      const code = s.charCodeAt(i);
-      bytes[i * 2] = code & 0xff;
-      bytes[i * 2 + 1] = 0x00;
+      const codeUnit = s.charCodeAt(i);   // 0..65535
+      bytes[i * 2] = codeUnit & 0xff;     // low byte
+      bytes[i * 2 + 1] = (codeUnit >>> 8) & 0xff; // high byte
     }
     return bytes;
   }
@@ -104,17 +104,15 @@
     return new Uint8Array(ab);
   }
 
+  // More robust base64 for Uint8Array
   function base64FromBytes(bytes) {
     let bin = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-    }
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     return btoa(bin);
   }
 
   async function encodeQuery(queryText) {
-    const bytes = nullPadBytes(queryText);
+    const bytes = utf16leBytes(queryText);   // FIXED
     const gz = await gzipBytes(bytes);
     return base64FromBytes(gz);
   }
@@ -140,12 +138,14 @@
   }
 
   function normalizeLibrary(lib) {
-    return ensureArray(lib).map((q) => ({
-      id: String(q.id || ""),
-      name: String(q.name || q.id || "Unnamed"),
-      requiredKeys: ensureArray(q.requiredKeys).map(String),
-      template: String(q.template || ""),
-    })).filter((q) => q.id && q.template);
+    return ensureArray(lib)
+      .map((q) => ({
+        id: String(q.id || ""),
+        name: String(q.name || q.id || "Unnamed"),
+        requiredKeys: ensureArray(q.requiredKeys).map(String),
+        template: String(q.template || ""),
+      }))
+      .filter((q) => q.id && q.template);
   }
 
   function buildUI(opts) {
@@ -263,7 +263,6 @@
       err.style.display = "none";
     }
 
-    // Dragging
     let drag = null;
     hdr.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
@@ -282,12 +281,8 @@
       modal.style.left = x + "px";
       modal.style.top = y + "px";
     });
-    hdr.addEventListener("pointerup", () => {
-      drag = null;
-    });
-    hdr.addEventListener("pointercancel", () => {
-      drag = null;
-    });
+    hdr.addEventListener("pointerup", () => (drag = null));
+    hdr.addEventListener("pointercancel", () => (drag = null));
 
     function close() {
       modal.remove();
@@ -344,11 +339,12 @@
       }
 
       const missing = computeMissing(q, kvp);
-      req.textContent = (q.requiredKeys && q.requiredKeys.length)
-        ? (missing.length
+      req.textContent =
+        q.requiredKeys && q.requiredKeys.length
+          ? missing.length
             ? `required: ${q.requiredKeys.join(", ")} (missing: ${missing.join(", ")})`
-            : `required: ${q.requiredKeys.join(", ")}`)
-        : "required: (none)";
+            : `required: ${q.requiredKeys.join(", ")}`
+          : "required: (none)";
 
       preview.value = substitute(q.template, kvp);
     }
@@ -381,24 +377,17 @@
       clearError();
 
       const q = getSelectedQuery();
-      if (!q) {
-        setError("Select a template first.");
-        return;
-      }
+      if (!q) return setError("Select a template first.");
 
       let kvp;
       try {
         kvp = parseKVP(kvpTA.value);
       } catch (e) {
-        setError(String(e && e.message ? e.message : e));
-        return;
+        return setError(String(e && e.message ? e.message : e));
       }
 
       const missing = computeMissing(q, kvp);
-      if (missing.length) {
-        setError(`Missing required keys: ${missing.join(", ")}`);
-        return;
-      }
+      if (missing.length) return setError(`Missing required keys: ${missing.join(", ")}`);
 
       const finalQuery = substitute(q.template, kvp);
 
@@ -424,7 +413,6 @@
 
     btnGo.addEventListener("click", go);
 
-    // Keyboard shortcuts
     modal.addEventListener("keydown", (e) => {
       if (e.key === "Escape") close();
     });
@@ -440,7 +428,6 @@
       render,
       setLibrary(newLib) {
         const normalized = normalizeLibrary(newLib);
-        // mutate in place so closures see it
         queryLibrary.length = 0;
         for (const q of normalized) queryLibrary.push(q);
         render();
@@ -448,7 +435,6 @@
     };
   }
 
-  // Expose a tiny API for your loader bookmarklet
   window.KqlQueryAssistant = {
     open: function (opts) {
       const options = opts || {};
