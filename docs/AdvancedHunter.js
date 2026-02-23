@@ -169,7 +169,7 @@ DeviceFileEvents
             gap: 15px;
             flex: 1 1 auto;
             min-height: 0;
-            overflow: auto;
+            overflow: hidden;
         }
         
         .ah-section {
@@ -179,6 +179,11 @@ DeviceFileEvents
             width: 100%;
             box-sizing: border-box;
             padding: 0 20px;
+        }
+
+        .ah-section.results-section {
+            flex: 1 1 0;
+            min-height: 0;
         }
 
         .ah-section.results-section {
@@ -508,7 +513,7 @@ DeviceFileEvents
                         placeholder="username=john.doe@contoso.com&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
                     ></textarea>
                 </div>
-                <div class="ah-section">
+                <div class="ah-section results-section">
                     <label class="ah-section-label">Matching Queries</label>
                     <div class="ah-results-container" id="ah-results">
                         <div class="ah-results-empty">
