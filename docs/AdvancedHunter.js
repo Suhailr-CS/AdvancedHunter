@@ -62,6 +62,57 @@ DeviceEvents
 | take 100`
         },
         {
+            name: "Email -> Find Similar Emails -> Find URL Clicks",
+            requiredKvps: ["networkmessageid"],
+            template: `// Find URL clicks from similar emails to NetworkMessageId: {{networkmessageid}}
+let NETWORKMESSAGEID = "{{networkmessageid}}";
+let ARRAY_FROM_TABLE_COLUMN = (TABLE: (*), COLUMN:string) {
+        set_difference(toscalar(TABLE | summarize make_set(column_ifexists(COLUMN, ""))), dynamic([""]))
+};
+let GET_SIMILAR_EMAILS = (NETWORKMESSAGEID: string) {
+    let Attributes = materialize (
+        EmailEvents
+        | where NetworkMessageId =~ NETWORKMESSAGEID
+        | distinct 
+            SenderMailFromAddress,
+            SenderMailFromDomain,
+            SenderDisplayName,
+            SenderFromAddress,
+            SenderFromDomain,
+            EmailClusterId,
+            Subject = tolower(Subject),
+            EmailSize
+        );
+    let INITIALSENDERMAILFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromAddress");
+    let INITIALSENDERMAILFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromDomain");
+    let INITIALSENDERDISPLAYNAMES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderDisplayName");
+    let INITIALSENDERFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromAddress");
+    let INITIALSENDERFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromDomain");
+    let INITIALEMAILCLUSTERIDS = ARRAY_FROM_TABLE_COLUMN(Attributes, "EmailClusterId");
+    let INITIALSUBJECTS = ARRAY_FROM_TABLE_COLUMN(Attributes, "Subject");
+    let AVGEMAILSIZE = tolong(toscalar(Attributes | summarize avg(EmailSize)));
+    let MINEMAILSIZE = 0.8*AVGEMAILSIZE;
+    let MAXEMAILSIZE = 1.2*AVGEMAILSIZE;
+    EmailEvents
+    | where 
+        SenderMailFromAddress in~ (INITIALSENDERMAILFROMADDRESSES) or
+        SenderMailFromDomain in~ (INITIALSENDERMAILFROMDOMAINS) or
+        SenderDisplayName in~ (INITIALSENDERDISPLAYNAMES) or
+        SenderFromAddress in~ (INITIALSENDERFROMADDRESSES) or
+        SenderFromDomain in~ (INITIALSENDERFROMDOMAINS) or
+        EmailClusterId in (INITIALEMAILCLUSTERIDS)
+    | where EmailSize between (MINEMAILSIZE .. MAXEMAILSIZE) and DeliveryLocation !~ "On-premises/external"
+    | extend InitialSubjects = INITIALSUBJECTS
+    | mv-expand InitialSubject = InitialSubjects
+    | extend InitialSubject = tostring(InitialSubject)
+    | where (jaccard_index(extract_all("([a-z]+)", tolower(Subject)), extract_all("([a-z]+)",InitialSubject)) > 0.5 or EmailClusterId in (INITIALEMAILCLUSTERIDS))
+    | project-away Initial*
+    | summarize arg_max(Timestamp, *) by NetworkMessageId, RecipientEmailAddress
+};
+GET_SIMILAR_EMAILS(NETWORKMESSAGEID)
+| join kind=rightsemi UrlClickEvents on NetworkMessageId`
+        },
+        {
             name: "Email -> Find Similar Emails",
             requiredKvps: ["networkmessageid"],
             template: `// Find similar emails to NetworkMessageId: {{networkmessageid}}
@@ -113,7 +164,7 @@ GET_SIMILAR_EMAILS(NETWORKMESSAGEID)`
         },
         {
             name: "Email -> Find DeviceFileEvents for Email Attachments",
-            requiredKvps: ["networkme"],
+            requiredKvps: ["networkmessageid"],
             template: `// Find DeviceFileEvents for email attachments from email with NetworkMessageId: {{networkmessageid}}
 let NETWORKMESSAGEID = "{{networkmessageid}}";
 let Lookup = (TABLE: (*), KEY:string, VALUE:string) {
