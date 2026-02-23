@@ -609,6 +609,9 @@ DeviceFileEvents
             const rect = modal.getBoundingClientRect();
             dragOffsetX = e.clientX - rect.left;
             dragOffsetY = e.clientY - rect.top;
+            // Explicitly set width/height to preserve flex layout during drag
+            modal.style.width = rect.width + 'px';
+            modal.style.height = rect.height + 'px';
             modal.style.transform = 'none';
             modal.style.left = rect.left + 'px';
             modal.style.top = rect.top + 'px';
@@ -622,6 +625,10 @@ DeviceFileEvents
         });
 
         document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                // Restore transform for future resizes/centering
+                modal.style.transform = '';
+            }
             isDragging = false;
         });
 
