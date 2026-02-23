@@ -33,10 +33,10 @@
     const QUERY_LIBRARY = [
         {
             name: "User Sign-in Activity",
-            requiredKvps: ["username"],
-            template: `// Sign-in activity for user: {{username}}
+            requiredKvps: ["accountupn"],
+            template: `// Sign-in activity for user: {{accountupn}}
 IdentityLogonEvents
-| where AccountUpn =~ "{{username}}" or AccountName =~ "{{username}}"
+| where AccountUpn =~ "{{accountupn}}" or AccountName =~ "{{accountupn}}"
 | project Timestamp, AccountUpn, AccountName, LogonType, DeviceName, IPAddress, Application
 | sort by Timestamp desc
 | take 100`
@@ -80,6 +80,49 @@ DeviceFileEvents
 | project Timestamp, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, InitiatingProcessAccountName
 | sort by Timestamp desc
 | take 100`
+        },
+        {
+            name: "Entra ID Protection Alert -> Potentially Related URL Clicks",
+            requiredKvps: ["alertid"],
+            template: `// Entra ID Protection Alert: {{alertid}}
+let ALERTID = "{{alertid}}";
+let ARRAY_FROM_TABLE_COLUMN = (TABLE: (*), COLUMN:string) {
+        set_difference(toscalar(TABLE | summarize make_set(column_ifexists(COLUMN, ""))), dynamic([""]))
+};
+let GET_ALERT_EVIDENCE = (ALERT_ID:string) {
+    AlertEvidence
+    | where AlertId endswith ALERT_ID
+    | extend AdditionalFields = todynamic(AdditionalFields)
+    | extend MergeByKeyHex = tostring(AdditionalFields.MergeByKeyHex)
+    | summarize arg_max(column_ifexists("TimeGenerated",Timestamp), *) by MergeByKeyHex
+    | evaluate bag_unpack(AdditionalFields, columnsConflict='keep_source')
+};
+let GET_ACCOUNT_IDENTIFIER = (ACCOUNT_OBJECT_ID:string, OUTPUT_COLUMN:string){toscalar(
+    IdentityInfo
+    | where AccountObjectId == ACCOUNT_OBJECT_ID and isnotempty(column_ifexists(OUTPUT_COLUMN,"")) and Timestamp > ago(14d)
+    | summarize arg_max(Timestamp,*) by AccountObjectId
+    | project column_ifexists(OUTPUT_COLUMN,""))
+};
+let ALERTEVIDENCE =     materialize(GET_ALERT_EVIDENCE(ALERTID));
+let SESSIONID =         tostring(ARRAY_FROM_TABLE_COLUMN((ALERTEVIDENCE),"SessionId")[0]);
+let REQUESTID =         tostring(ARRAY_FROM_TABLE_COLUMN((ALERTEVIDENCE),"RequestId")[0]);
+let ACCOUNTOBJECTID =   tostring(ARRAY_FROM_TABLE_COLUMN(ALERTEVIDENCE,"AccountObjectId")[0]);
+let ACCOUNTUPN =        GET_ACCOUNT_IDENTIFIER(ACCOUNTOBJECTID, "AccountUpn");
+let EMAILADDRESS =      GET_ACCOUNT_IDENTIFIER(ACCOUNTOBJECTID, "EmailAddress");
+let SUSPICIOUSSIGNINS = materialize(
+    EntraIdSignInEvents
+    | where AccountObjectId =~ ACCOUNTOBJECTID
+    | where
+        SessionId =~ SESSIONID or
+        RequestId =~ REQUESTID
+    | join kind=rightsemi EntraIdSignInEvents on CorrelationId
+);
+let MINSUSPICIOUSSIGNINTIMESTAMP = todatetime(toscalar(SUSPICIOUSSIGNINS | summarize min(Timestamp)));
+UrlClickEvents
+| where AccountUpn in~ (EMAILADDRESS, ACCOUNTUPN) and Timestamp between ((MINSUSPICIOUSSIGNINTIMESTAMP - 30m) .. MINSUSPICIOUSSIGNINTIMESTAMP)
+| summarize arg_max(Timestamp,*) by NetworkMessageId, Url
+| extend TimeDelta = MINSUSPICIOUSSIGNINTIMESTAMP - Timestamp
+| join kind=leftsemi (EmailEvents | where IsFirstContact) on NetworkMessageId`
         }
     ];
 
