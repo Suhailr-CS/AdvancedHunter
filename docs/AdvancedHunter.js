@@ -584,18 +584,22 @@
 
             // Substitute KVPs into query template
             const finalQuery = substituteKvps(selectedQuery.template, currentKvps);
-            
+
             // Encode the query
             const encodedQuery = await encodeQuery(finalQuery);
-            
+
             // Get tenant ID from current URL
             const tenantId = getTenantId();
-            
+
             // Build the new URL
             const newUrl = buildUrl(encodedQuery, tenantId);
-            
-            // Navigate to the new URL
-            window.location.href = newUrl;
+
+            // Open the new URL in a new tab
+            window.open(newUrl, '_blank');
+
+            // Keep modal open, reset submit button
+            submitBtn.textContent = 'Submit';
+            submitBtn.disabled = false;
         } catch (error) {
             console.error('Advanced Hunter Error:', error);
             alert('Error processing query: ' + error.message);
