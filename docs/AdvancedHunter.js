@@ -1,448 +1,693 @@
-(function () {
-  "use strict";
+/**
+ * AdvancedHunter.js - Microsoft Defender XDR Advanced Hunting Bookmarklet
+ * 
+ * This script creates a draggable, resizable modal interface for quickly
+ * executing KQL queries with variable substitution in Microsoft Defender XDR.
+ * 
+ * USAGE:
+ * 1. Host this file on GitHub Pages or any web server
+ * 2. Use the loader bookmarklet to inject this script
+ * 3. Enter key=value pairs (one per line)
+ * 4. Select a matching query from the filtered list
+ * 5. Click Submit to execute the query
+ * 
+ * ADDING NEW QUERIES:
+ * Add entries to the QUERY_LIBRARY array below. Each query needs:
+ *   - name: Display name for the query
+ *   - requiredKvps: Array of required KVP keys (lowercase)
+ *   - template: KQL query with {{key}} placeholders for substitution
+ */
 
-  const DEFAULT_ROOT_URL = "https://security.microsoft.com/v2/advanced-hunting";
-  const DEFAULT_ID = "__kql_qassist__";
+(function() {
+    'use strict';
 
-  const DEFAULT_QUERY_LIBRARY = [
-    {
-      id: "device_events_by_device",
-      name: "Device events (by device)",
-      requiredKeys: ["device"],
-      template: [
-        "DeviceEvents",
-        '| where DeviceName == "{{device}}"',
-        "| order by Timestamp desc",
-        "| take 200",
-      ].join("\n"),
-    },
-    {
-      id: "network_events_by_ip",
-      name: "Network events (by remote IP)",
-      requiredKeys: ["ip"],
-      template: [
-        "DeviceNetworkEvents",
-        '| where RemoteIP == "{{ip}}"',
-        "| order by Timestamp desc",
-        "| take 200",
-      ].join("\n"),
-    },
-    {
-      id: "file_events_by_sha256",
-      name: "File events (by SHA256)",
-      requiredKeys: ["sha256"],
-      template: [
-        "DeviceFileEvents",
-        '| where SHA256 == "{{sha256}}"',
-        "| order by Timestamp desc",
-        "| take 200",
-      ].join("\n"),
-    },
-  ];
+    // ==========================================================================
+    // QUERY LIBRARY - Add your KQL queries here
+    // ==========================================================================
+    // Each query has:
+    //   name: Human-readable query name
+    //   requiredKvps: Array of required KVP keys (use lowercase)
+    //   template: KQL query template with {{key}} placeholders
+    // ==========================================================================
+    
+    const QUERY_LIBRARY = [
+        {
+            name: "User Sign-in Activity",
+            requiredKvps: ["username"],
+            template: `// Sign-in activity for user: {{username}}
+IdentityLogonEvents
+| where AccountUpn =~ "{{username}}" or AccountName =~ "{{username}}"
+| project Timestamp, AccountUpn, AccountName, LogonType, DeviceName, IPAddress, Application
+| sort by Timestamp desc
+| take 100`
+        },
+        {
+            name: "IP Address Investigation",
+            requiredKvps: ["ipaddress"],
+            template: `// Network activity from IP: {{ipaddress}}
+DeviceNetworkEvents
+| where RemoteIP == "{{ipaddress}}" or LocalIP == "{{ipaddress}}"
+| project Timestamp, DeviceName, ActionType, RemoteIP, RemotePort, LocalIP, LocalPort, InitiatingProcessFileName
+| sort by Timestamp desc
+| take 100`
+        },
+        {
+            name: "Device Security Events",
+            requiredKvps: ["hostname"],
+            template: `// Security events for device: {{hostname}}
+DeviceEvents
+| where DeviceName =~ "{{hostname}}"
+| project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessFileName
+| sort by Timestamp desc
+| take 100`
+        },
+        {
+            name: "User Activity on Device",
+            requiredKvps: ["username", "hostname"],
+            template: `// Activity for {{username}} on {{hostname}}
+union DeviceLogonEvents, DeviceProcessEvents, DeviceNetworkEvents
+| where DeviceName =~ "{{hostname}}" and (AccountName =~ "{{username}}" or InitiatingProcessAccountName =~ "{{username}}")
+| project Timestamp, DeviceName, AccountName, ActionType
+| sort by Timestamp desc
+| take 100`
+        },
+        {
+            name: "File Hash Investigation",
+            requiredKvps: ["sha256"],
+            template: `// File hash investigation: {{sha256}}
+DeviceFileEvents
+| where SHA256 == "{{sha256}}"
+| project Timestamp, DeviceName, FileName, FolderPath, ActionType, InitiatingProcessFileName, InitiatingProcessAccountName
+| sort by Timestamp desc
+| take 100`
+        }
+    ];
 
-  function escHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => {
-      const m = {
-        "&": "&amp;",
-        "<​": "&lt;",     // FIXED (removed hidden char)
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return m[c] || c;
-    });
-  }
-
-  function clamp(n, min, max) {
-    return Math.min(max, Math.max(min, n));
-  }
-
-  function parseKVP(text) {
-    const out = {};
-    const lines = String(text || "").split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i].trim();
-      if (!raw) continue;
-      const eq = raw.indexOf("=");
-      if (eq < 0) throw new Error(`Line ${i + 1}: missing '=' (expected key=value)`);
-      const key = raw.slice(0, eq).trim();
-      const val = raw.slice(eq + 1);
-      if (!key) throw new Error(`Line ${i + 1}: empty key`);
-      out[key] = val;
-    }
-    return out;
-  }
-
-  function substitute(template, kvp) {
-    return String(template).replace(/\{\{\s*([a-zA-Z0-9_\-\.]+)\s*\}\}/g, (m, k) => {
-      if (Object.prototype.hasOwnProperty.call(kvp, k)) return String(kvp[k]);
-      return m;
-    });
-  }
-
-  // FIX: Proper UTF-16LE encoding (2 bytes per code unit).
-  // This matches "null byte after each character" ONLY for ASCII,
-  // but also correctly preserves non-ASCII characters.
-  function utf16leBytes(str) {
-    const s = String(str);
-    const bytes = new Uint8Array(s.length * 2);
-    for (let i = 0; i < s.length; i++) {
-      const codeUnit = s.charCodeAt(i);   // 0..65535
-      bytes[i * 2] = codeUnit & 0xff;     // low byte
-      bytes[i * 2 + 1] = (codeUnit >>> 8) & 0xff; // high byte
-    }
-    return bytes;
-  }
-
-  async function gzipBytes(bytes) {
-    if (!("CompressionStream" in window)) {
-      throw new Error('CompressionStream("gzip") not available in this browser context.');
-    }
-    const cs = new CompressionStream("gzip");
-    const stream = new Blob([bytes]).stream().pipeThrough(cs);
-    const ab = await new Response(stream).arrayBuffer();
-    return new Uint8Array(ab);
-  }
-
-  // More robust base64 for Uint8Array
-  function base64FromBytes(bytes) {
-    let bin = "";
-    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return btoa(bin);
-  }
-
-  async function encodeQuery(queryText) {
-    const bytes = utf16leBytes(queryText);   // FIXED
-    const gz = await gzipBytes(bytes);
-    return base64FromBytes(gz);
-  }
-
-  function getTidFromCurrentUrl() {
-    let tid = "";
-    try {
-      const cur = new URL(location.href);
-      tid = cur.searchParams.get("tid") || "";
-    } catch {
-      tid = "";
-    }
-    return tid;
-  }
-
-  function computeMissing(q, kvp) {
-    const reqKeys = q.requiredKeys || [];
-    return reqKeys.filter((k) => !(k in kvp) || kvp[k] === "");
-  }
-
-  function ensureArray(x) {
-    return Array.isArray(x) ? x : [];
-  }
-
-  function normalizeLibrary(lib) {
-    return ensureArray(lib)
-      .map((q) => ({
-        id: String(q.id || ""),
-        name: String(q.name || q.id || "Unnamed"),
-        requiredKeys: ensureArray(q.requiredKeys).map(String),
-        template: String(q.template || ""),
-      }))
-      .filter((q) => q.id && q.template);
-  }
-
-  function buildUI(opts) {
-    const id = opts.id || DEFAULT_ID;
-    const rootUrl = opts.rootUrl || DEFAULT_ROOT_URL;
-    const queryLibrary = normalizeLibrary(opts.queryLibrary || DEFAULT_QUERY_LIBRARY);
-
-    if (document.getElementById(id)) return null;
-
-    const tid = getTidFromCurrentUrl();
-    if (!tid) {
-      throw new Error("tid not found on current URL (?tid=...). Open Advanced Hunting first (or ensure tid is present).");
-    }
-
-    const modal = document.createElement("div");
-    modal.id = id;
-    modal.setAttribute("role", "dialog");
-    modal.setAttribute("aria-label", "KQL query assistant");
-    modal.style.cssText = [
-      "position:fixed",
-      "left:24px",
-      "top:24px",
-      "width:760px",
-      "max-width:calc(100vw - 24px*2)",
-      "background:#111827",
-      "color:#F9FAFB",
-      "border:1px solid rgba(255,255,255,0.18)",
-      "border-radius:12px",
-      "box-shadow:0 18px 60px rgba(0,0,0,0.55)",
-      "z-index:2147483647",
-      "font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial",
-      "overflow:hidden",
-    ].join(";");
-
-    modal.innerHTML = `
-      <div id="${id}__hdr" style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;background:#0B1220;cursor:move;user-select:none;">
-        <div style="display:flex;flex-direction:column;min-width:0;">
-          <div style="font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">KQL query assistant</div>
-          <div style="opacity:.75;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(rootUrl)} (tid from current URL)</div>
-        </div>
-        <button id="${id}__x" type="button" title="Close" style="appearance:none;border:0;background:transparent;color:#F9FAFB;font-size:18px;line-height:18px;padding:6px 8px;border-radius:8px;cursor:pointer;">×</button>
-      </div>
-
-      <div style="padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div style="display:flex;flex-direction:column;gap:8px;min-width:0;">
-          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
-            <div style="font-weight:700;">Inputs (KVP)</div>
-            <div style="opacity:.75;font-size:12px;white-space:nowrap;">Format: <code style="background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px;">key=value</code></div>
-          </div>
-          <textarea id="${id}__kvp" spellcheck="false"
-            style="width:100%;height:190px;resize:vertical;min-height:140px;max-height:55vh;background:#0B1220;color:#F9FAFB;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:10px;outline:none;"
-            placeholder="device=MY-LAPTOP\nip=1.2.3.4\nsha256=...\n"></textarea>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-            <button id="${id}__clear" type="button" style="appearance:none;border:1px solid rgba(255,255,255,0.18);background:transparent;color:#F9FAFB;padding:8px 10px;border-radius:10px;cursor:pointer;">Clear</button>
-          </div>
-        </div>
-
-        <div style="display:flex;flex-direction:column;gap:8px;min-width:0;">
-          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">
-            <div style="font-weight:700;">KQL template</div>
-            <div id="${id}__req" style="opacity:.75;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
-          </div>
-
-          <input id="${id}__filter" type="text" placeholder="Filter templates…"
-            style="width:100%;background:#0B1220;color:#F9FAFB;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:8px 10px;outline:none;" />
-
-          <select id="${id}__sel" size="7"
-            style="width:100%;background:#0B1220;color:#F9FAFB;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:8px 10px;outline:none;"></select>
-
-          <div style="font-weight:700;">Preview</div>
-          <textarea id="${id}__preview" spellcheck="false" readonly
-            style="width:100%;height:190px;resize:vertical;min-height:140px;max-height:55vh;background:#0B1220;color:#F9FAFB;border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:10px;outline:none;opacity:.95;"></textarea>
-
-          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-            <button id="${id}__copy" type="button" style="appearance:none;border:1px solid rgba(255,255,255,0.18);background:transparent;color:#F9FAFB;padding:8px 10px;border-radius:10px;cursor:pointer;">Copy KQL</button>
-            <button id="${id}__go" type="button" style="appearance:none;border:0;background:#2563EB;color:white;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700;">Submit → Advanced Hunting</button>
-          </div>
-        </div>
-
-        <div style="grid-column:1 / -1;display:flex;flex-direction:column;gap:6px;">
-          <div id="${id}__status" style="display:none;color:#A7F3D0;font-size:12px;"></div>
-          <div id="${id}__err" style="display:none;color:#FCA5A5;font-size:12px;"></div>
-        </div>
-      </div>
+    // ==========================================================================
+    // STYLES - Cybersecurity/SOAR themed color palette
+    // ==========================================================================
+    
+    const STYLES = `
+        .ah-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 999998;
+        }
+        
+        .ah-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            min-width: 400px;
+            min-height: 400px;
+            background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 100%);
+            border: 1px solid #00d9ff;
+            border-radius: 12px;
+            box-shadow: 0 0 30px rgba(0, 217, 255, 0.3), 0 10px 40px rgba(0, 0, 0, 0.5);
+            z-index: 999999;
+            font-family: 'Segoe UI', 'Roboto', sans-serif;
+            color: #e0e0e0;
+            overflow: hidden;
+            resize: both;
+        }
+        
+        .ah-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: linear-gradient(90deg, #1b3a4b 0%, #0d1b2a 100%);
+            border-bottom: 1px solid #00d9ff;
+            cursor: move;
+            user-select: none;
+        }
+        
+        .ah-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #00d9ff;
+            text-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .ah-title-icon {
+            font-size: 22px;
+        }
+        
+        .ah-close-btn {
+            background: none;
+            border: none;
+            color: #ff4757;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 5px;
+            line-height: 1;
+            transition: all 0.2s ease;
+        }
+        
+        .ah-close-btn:hover {
+            color: #ff6b7a;
+            text-shadow: 0 0 10px rgba(255, 71, 87, 0.5);
+        }
+        
+        .ah-body {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            height: calc(100% - 130px);
+            overflow: hidden;
+        }
+        
+        .ah-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .ah-section-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: #64dfdf;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .ah-kvp-input {
+            width: 100%;
+            height: 100px;
+            padding: 12px;
+            background: #0a1628;
+            border: 1px solid #2d4a5e;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            resize: vertical;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .ah-kvp-input:focus {
+            outline: none;
+            border-color: #00d9ff;
+            box-shadow: 0 0 15px rgba(0, 217, 255, 0.2);
+        }
+        
+        .ah-kvp-input::placeholder {
+            color: #5a6a7a;
+        }
+        
+        .ah-results-container {
+            flex: 1;
+            min-height: 120px;
+            background: #0a1628;
+            border: 1px solid #2d4a5e;
+            border-radius: 8px;
+            overflow-y: auto;
+        }
+        
+        .ah-results-empty {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #5a6a7a;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .ah-query-item {
+            padding: 12px 15px;
+            border-bottom: 1px solid #1b3a4b;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .ah-query-item:last-child {
+            border-bottom: none;
+        }
+        
+        .ah-query-item:hover {
+            background: #1b3a4b;
+        }
+        
+        .ah-query-item.selected {
+            background: linear-gradient(90deg, #00d9ff20 0%, #1b3a4b 100%);
+            border-left: 3px solid #00d9ff;
+        }
+        
+        .ah-query-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: #e0e0e0;
+            margin-bottom: 4px;
+        }
+        
+        .ah-query-kvps {
+            font-size: 11px;
+            color: #64dfdf;
+        }
+        
+        .ah-footer {
+            padding: 15px 20px;
+            border-top: 1px solid #2d4a5e;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        .ah-btn {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .ah-btn-submit {
+            background: linear-gradient(135deg, #00d9ff 0%, #00a8cc 100%);
+            color: #0d1b2a;
+        }
+        
+        .ah-btn-submit:hover:not(:disabled) {
+            background: linear-gradient(135deg, #33e1ff 0%, #00c4eb 100%);
+            box-shadow: 0 0 20px rgba(0, 217, 255, 0.4);
+        }
+        
+        .ah-btn-submit:disabled {
+            background: #2d4a5e;
+            color: #5a6a7a;
+            cursor: not-allowed;
+        }
+        
+        .ah-btn-cancel {
+            background: transparent;
+            border: 1px solid #5a6a7a;
+            color: #e0e0e0;
+        }
+        
+        .ah-btn-cancel:hover {
+            border-color: #ff4757;
+            color: #ff4757;
+        }
+        
+        /* Custom scrollbar */
+        .ah-results-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .ah-results-container::-webkit-scrollbar-track {
+            background: #0a1628;
+        }
+        
+        .ah-results-container::-webkit-scrollbar-thumb {
+            background: #2d4a5e;
+            border-radius: 4px;
+        }
+        
+        .ah-results-container::-webkit-scrollbar-thumb:hover {
+            background: #3d5a6e;
+        }
     `;
 
-    document.documentElement.appendChild(modal);
+    // ==========================================================================
+    // STATE MANAGEMENT
+    // ==========================================================================
+    
+    let selectedQuery = null;
+    let currentKvps = {};
 
-    const hdr = modal.querySelector(`#${id}__hdr`);
-    const kvpTA = modal.querySelector(`#${id}__kvp`);
-    const filterIn = modal.querySelector(`#${id}__filter`);
-    const sel = modal.querySelector(`#${id}__sel`);
-    const req = modal.querySelector(`#${id}__req`);
-    const preview = modal.querySelector(`#${id}__preview`);
-    const status = modal.querySelector(`#${id}__status`);
-    const err = modal.querySelector(`#${id}__err`);
-    const btnGo = modal.querySelector(`#${id}__go`);
+    // ==========================================================================
+    // UTILITY FUNCTIONS
+    // ==========================================================================
 
-    let statusTimer = null;
-    function setStatus(msg) {
-      status.textContent = msg;
-      status.style.display = "block";
-      if (statusTimer) clearTimeout(statusTimer);
-      statusTimer = setTimeout(() => {
-        status.style.display = "none";
-        status.textContent = "";
-      }, 1600);
-    }
-    function setError(msg) {
-      err.textContent = msg;
-      err.style.display = "block";
-    }
-    function clearError() {
-      err.textContent = "";
-      err.style.display = "none";
-    }
-
-    let drag = null;
-    hdr.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0) return;
-      if (e.target && e.target.id === `${id}__x`) return;
-      const r = modal.getBoundingClientRect();
-      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-      hdr.setPointerCapture(e.pointerId);
-      e.preventDefault();
-    });
-    hdr.addEventListener("pointermove", (e) => {
-      if (!drag) return;
-      const w = modal.offsetWidth;
-      const h = modal.offsetHeight;
-      const x = clamp(e.clientX - drag.dx, 8, window.innerWidth - w - 8);
-      const y = clamp(e.clientY - drag.dy, 8, window.innerHeight - h - 8);
-      modal.style.left = x + "px";
-      modal.style.top = y + "px";
-    });
-    hdr.addEventListener("pointerup", () => (drag = null));
-    hdr.addEventListener("pointercancel", () => (drag = null));
-
-    function close() {
-      modal.remove();
-    }
-    modal.querySelector(`#${id}__x`).addEventListener("click", close);
-
-    function getSelectedQuery() {
-      return queryLibrary.find((q) => q.id === sel.value);
+    /**
+     * Parses key=value pairs from text input
+     * Handles case-insensitive key matching
+     * @param {string} text - Input text with one KVP per line
+     * @returns {Object} - Object with lowercase keys and their values
+     */
+    function parseKvps(text) {
+        const kvps = {};
+        const lines = text.split('\n');
+        
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.includes('=')) continue;
+            
+            const eqIndex = trimmed.indexOf('=');
+            const key = trimmed.substring(0, eqIndex).trim().toLowerCase();
+            const value = trimmed.substring(eqIndex + 1).trim();
+            
+            if (key && value) {
+                kvps[key] = value;
+            }
+        }
+        
+        return kvps;
     }
 
-    function render() {
-      clearError();
-
-      let kvp;
-      try {
-        kvp = parseKVP(kvpTA.value);
-      } catch (e) {
-        setError(String(e && e.message ? e.message : e));
-        return;
-      }
-
-      const filter = String(filterIn.value || "").toLowerCase();
-      const prevSel = sel.value;
-      sel.innerHTML = "";
-
-      const list = queryLibrary
-        .filter((q) => {
-          if (!filter) return true;
-          return (q.name || "").toLowerCase().includes(filter) || (q.id || "").toLowerCase().includes(filter);
-        })
-        .map((q) => ({ q, missing: computeMissing(q, kvp) }));
-
-      for (const item of list) {
-        const q = item.q;
-        const missing = item.missing;
-        const opt = document.createElement("option");
-        opt.value = q.id;
-        opt.textContent = missing.length ? `${q.name}  (missing: ${missing.join(", ")})` : q.name;
-        opt.disabled = missing.length > 0;
-        sel.appendChild(opt);
-      }
-
-      if (prevSel && Array.from(sel.options).some((o) => o.value === prevSel)) sel.value = prevSel;
-      if (!sel.value) {
-        const firstEnabled = Array.from(sel.options).find((o) => !o.disabled);
-        if (firstEnabled) sel.value = firstEnabled.value;
-      }
-
-      const q = getSelectedQuery();
-      if (!q) {
-        preview.value = "";
-        req.textContent = "";
-        return;
-      }
-
-      const missing = computeMissing(q, kvp);
-      req.textContent =
-        q.requiredKeys && q.requiredKeys.length
-          ? missing.length
-            ? `required: ${q.requiredKeys.join(", ")} (missing: ${missing.join(", ")})`
-            : `required: ${q.requiredKeys.join(", ")}`
-          : "required: (none)";
-
-      preview.value = substitute(q.template, kvp);
+    /**
+     * Filters queries based on provided KVPs
+     * A query matches if all its required KVPs are present
+     * @param {Object} kvps - Parsed KVPs object
+     * @returns {Array} - Array of matching query objects
+     */
+    function filterQueries(kvps) {
+        const kvpKeys = Object.keys(kvps);
+        
+        return QUERY_LIBRARY.filter(query => {
+            // Queries with no required KVPs always match
+            if (query.requiredKvps.length === 0) return true;
+            
+            // Check if all required KVPs are present
+            return query.requiredKvps.every(required => 
+                kvpKeys.includes(required.toLowerCase())
+            );
+        });
     }
 
-    modal.querySelector(`#${id}__clear`).addEventListener("click", () => {
-      kvpTA.value = "";
-      render();
-      kvpTA.focus();
-      setStatus("Cleared.");
-    });
-
-    kvpTA.addEventListener("input", render);
-    filterIn.addEventListener("input", render);
-    sel.addEventListener("change", render);
-
-    modal.querySelector(`#${id}__copy`).addEventListener("click", async () => {
-      clearError();
-      try {
-        await navigator.clipboard.writeText(preview.value || "");
-        setStatus("Copied KQL to clipboard.");
-      } catch {
-        preview.focus();
-        preview.select();
-        document.execCommand("copy");
-        setStatus("Copied (fallback).");
-      }
-    });
-
-    async function go() {
-      clearError();
-
-      const q = getSelectedQuery();
-      if (!q) return setError("Select a template first.");
-
-      let kvp;
-      try {
-        kvp = parseKVP(kvpTA.value);
-      } catch (e) {
-        return setError(String(e && e.message ? e.message : e));
-      }
-
-      const missing = computeMissing(q, kvp);
-      if (missing.length) return setError(`Missing required keys: ${missing.join(", ")}`);
-
-      const finalQuery = substitute(q.template, kvp);
-
-      btnGo.disabled = true;
-      btnGo.style.opacity = "0.8";
-      btnGo.textContent = "Encoding…";
-
-      try {
-        const encoded = await encodeQuery(finalQuery);
-        const target = new URL(rootUrl);
-        target.searchParams.set("tid", tid);
-        target.searchParams.set("query", encoded);
-        target.searchParams.set("timeRangeId", "month");
-        location.href = target.toString();
-      } catch (e) {
-        setError(String(e && e.message ? e.message : e));
-      } finally {
-        btnGo.disabled = false;
-        btnGo.style.opacity = "1";
-        btnGo.textContent = "Submit → Advanced Hunting";
-      }
+    /**
+     * Substitutes KVP values into query template
+     * @param {string} template - Query template with {{key}} placeholders
+     * @param {Object} kvps - Parsed KVPs object
+     * @returns {string} - Query with substituted values
+     */
+    function substituteKvps(template, kvps) {
+        let result = template;
+        
+        for (const [key, value] of Object.entries(kvps)) {
+            const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'gi');
+            result = result.replace(regex, value);
+        }
+        
+        return result;
     }
 
-    btnGo.addEventListener("click", go);
+    /**
+     * Encodes query string: UTF-16LE → gzip compress → base64 URL-safe
+     * @param {string} query - KQL query string
+     * @returns {Promise<string>} - Encoded query string
+     */
+    async function encodeQuery(query) {
+        // Convert to UTF-16LE
+        const utf16Bytes = new Uint8Array(query.length * 2);
+        for (let i = 0; i < query.length; i++) {
+            const charCode = query.charCodeAt(i);
+            utf16Bytes[i * 2] = charCode & 0xFF;         // Low byte
+            utf16Bytes[i * 2 + 1] = (charCode >> 8) & 0xFF;  // High byte
+        }
 
-    modal.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") close();
-    });
-    kvpTA.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") go();
-    });
+        // Gzip compress using CompressionStream
+        const stream = new Blob([utf16Bytes]).stream();
+        const compressedStream = stream.pipeThrough(new CompressionStream('gzip'));
+        const compressedBlob = await new Response(compressedStream).blob();
+        const compressedBuffer = await compressedBlob.arrayBuffer();
+        const compressedBytes = new Uint8Array(compressedBuffer);
 
-    render();
-    kvpTA.focus();
+        // Convert to base64 URL-safe
+        let base64 = btoa(String.fromCharCode(...compressedBytes));
+        // Make URL-safe: + → -, / → _, remove padding =
+        base64 = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    return {
-      close,
-      render,
-      setLibrary(newLib) {
-        const normalized = normalizeLibrary(newLib);
-        queryLibrary.length = 0;
-        for (const q of normalized) queryLibrary.push(q);
-        render();
-      },
-    };
-  }
+        return base64;
+    }
 
-  window.KqlQueryAssistant = {
-    open: function (opts) {
-      const options = opts || {};
-      return buildUI({
-        id: options.id || DEFAULT_ID,
-        rootUrl: options.rootUrl || DEFAULT_ROOT_URL,
-        queryLibrary: options.queryLibrary || DEFAULT_QUERY_LIBRARY,
-      });
-    },
-  };
+    /**
+     * Extracts tenant ID from current URL
+     * @returns {string|null} - Tenant ID or null if not found
+     */
+    function getTenantId() {
+        const url = new URL(window.location.href);
+        return url.searchParams.get('tid');
+    }
+
+    /**
+     * Builds the Advanced Hunting URL with encoded query
+     * @param {string} encodedQuery - Base64 URL-safe encoded query
+     * @param {string} tenantId - Microsoft tenant ID
+     * @returns {string} - Complete Advanced Hunting URL
+     */
+    function buildUrl(encodedQuery, tenantId) {
+        let url = 'https://security.microsoft.com/v2/advanced-hunting';
+        const params = new URLSearchParams();
+        
+        if (tenantId) {
+            params.set('tid', tenantId);
+        }
+        params.set('query', encodedQuery);
+        params.set('timeRangeId', 'month');
+        
+        return `${url}?${params.toString()}`;
+    }
+
+    // ==========================================================================
+    // UI COMPONENTS
+    // ==========================================================================
+
+    /**
+     * Creates and injects the modal UI
+     */
+    function createModal() {
+        // Inject styles
+        const styleEl = document.createElement('style');
+        styleEl.id = 'ah-styles';
+        styleEl.textContent = STYLES;
+        document.head.appendChild(styleEl);
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'ah-modal-overlay';
+        overlay.id = 'ah-overlay';
+
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'ah-modal';
+        modal.id = 'ah-modal';
+        modal.innerHTML = `
+            <div class="ah-header" id="ah-header">
+                <div class="ah-title">
+                    <span class="ah-title-icon">🔍</span>
+                    Advanced Hunter
+                </div>
+                <button class="ah-close-btn" id="ah-close">×</button>
+            </div>
+            <div class="ah-body">
+                <div class="ah-section">
+                    <label class="ah-section-label">Key-Value Pairs (one per line)</label>
+                    <textarea 
+                        class="ah-kvp-input" 
+                        id="ah-kvp-input"
+                        placeholder="username=john.doe@contoso.com&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
+                    ></textarea>
+                </div>
+                <div class="ah-section" style="flex: 1; min-height: 0;">
+                    <label class="ah-section-label">Matching Queries</label>
+                    <div class="ah-results-container" id="ah-results">
+                        <div class="ah-results-empty">
+                            Enter KVPs above to see matching queries
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="ah-footer">
+                <button class="ah-btn ah-btn-cancel" id="ah-cancel">Cancel</button>
+                <button class="ah-btn ah-btn-submit" id="ah-submit" disabled>Submit</button>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+        document.body.appendChild(modal);
+
+        // Initialize event handlers
+        initEventHandlers();
+        
+        // Show all queries initially (those with no required KVPs)
+        updateResults();
+    }
+
+    /**
+     * Updates the query results based on current KVPs
+     */
+    function updateResults() {
+        const resultsContainer = document.getElementById('ah-results');
+        const matchingQueries = filterQueries(currentKvps);
+        
+        if (matchingQueries.length === 0) {
+            resultsContainer.innerHTML = `
+                <div class="ah-results-empty">
+                    No queries match the provided KVPs
+                </div>
+            `;
+            selectedQuery = null;
+            updateSubmitButton();
+            return;
+        }
+
+        resultsContainer.innerHTML = matchingQueries.map((query, index) => `
+            <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}">
+                <div class="ah-query-name">${query.name}</div>
+                <div class="ah-query-kvps">Required: ${query.requiredKvps.length > 0 ? query.requiredKvps.join(', ') : 'None'}</div>
+            </div>
+        `).join('');
+
+        // Add click handlers to query items
+        resultsContainer.querySelectorAll('.ah-query-item').forEach(item => {
+            item.addEventListener('click', () => {
+                // Remove selection from all items
+                resultsContainer.querySelectorAll('.ah-query-item').forEach(i => i.classList.remove('selected'));
+                // Select clicked item
+                item.classList.add('selected');
+                selectedQuery = QUERY_LIBRARY[parseInt(item.dataset.index)];
+                updateSubmitButton();
+            });
+        });
+
+        // Clear selection when results change
+        selectedQuery = null;
+        updateSubmitButton();
+    }
+
+    /**
+     * Updates the submit button state
+     */
+    function updateSubmitButton() {
+        const submitBtn = document.getElementById('ah-submit');
+        submitBtn.disabled = !selectedQuery;
+    }
+
+    /**
+     * Initializes all event handlers
+     */
+    function initEventHandlers() {
+        const modal = document.getElementById('ah-modal');
+        const header = document.getElementById('ah-header');
+        const closeBtn = document.getElementById('ah-close');
+        const cancelBtn = document.getElementById('ah-cancel');
+        const submitBtn = document.getElementById('ah-submit');
+        const kvpInput = document.getElementById('ah-kvp-input');
+        const overlay = document.getElementById('ah-overlay');
+
+        // Close handlers
+        closeBtn.addEventListener('click', closeModal);
+        cancelBtn.addEventListener('click', closeModal);
+        overlay.addEventListener('click', closeModal);
+
+        // KVP input handler - real-time filtering
+        kvpInput.addEventListener('input', () => {
+            currentKvps = parseKvps(kvpInput.value);
+            updateResults();
+        });
+
+        // Submit handler
+        submitBtn.addEventListener('click', handleSubmit);
+
+        // Draggable functionality
+        let isDragging = false;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+
+        header.addEventListener('mousedown', (e) => {
+            if (e.target === closeBtn) return;
+            isDragging = true;
+            const rect = modal.getBoundingClientRect();
+            dragOffsetX = e.clientX - rect.left;
+            dragOffsetY = e.clientY - rect.top;
+            modal.style.transform = 'none';
+            modal.style.left = rect.left + 'px';
+            modal.style.top = rect.top + 'px';
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            modal.style.left = (e.clientX - dragOffsetX) + 'px';
+            modal.style.top = (e.clientY - dragOffsetY) + 'px';
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Keyboard shortcut: Escape to close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+    }
+
+    /**
+     * Handles the submit button click
+     */
+    async function handleSubmit() {
+        if (!selectedQuery) return;
+
+        try {
+            const submitBtn = document.getElementById('ah-submit');
+            submitBtn.textContent = 'Processing...';
+            submitBtn.disabled = true;
+
+            // Substitute KVPs into query template
+            const finalQuery = substituteKvps(selectedQuery.template, currentKvps);
+            
+            // Encode the query
+            const encodedQuery = await encodeQuery(finalQuery);
+            
+            // Get tenant ID from current URL
+            const tenantId = getTenantId();
+            
+            // Build the new URL
+            const newUrl = buildUrl(encodedQuery, tenantId);
+            
+            // Navigate to the new URL
+            window.location.href = newUrl;
+        } catch (error) {
+            console.error('Advanced Hunter Error:', error);
+            alert('Error processing query: ' + error.message);
+            const submitBtn = document.getElementById('ah-submit');
+            submitBtn.textContent = 'Submit';
+            submitBtn.disabled = false;
+        }
+    }
+
+    /**
+     * Closes and removes the modal
+     */
+    function closeModal() {
+        const modal = document.getElementById('ah-modal');
+        const overlay = document.getElementById('ah-overlay');
+        const styles = document.getElementById('ah-styles');
+        
+        if (modal) modal.remove();
+        if (overlay) overlay.remove();
+        if (styles) styles.remove();
+        
+        selectedQuery = null;
+        currentKvps = {};
+    }
+
+    // ==========================================================================
+    // INITIALIZATION
+    // ==========================================================================
+
+    // Check if modal already exists (prevent double-load)
+    if (document.getElementById('ah-modal')) {
+        closeModal();
+    }
+
+    // Create the modal
+    createModal();
+
 })();
