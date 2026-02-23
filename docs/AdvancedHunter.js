@@ -163,7 +163,7 @@ DeviceFileEvents
         }
         
         .ah-body {
-            padding: 20px;
+            padding: 20px 0;
             display: flex;
             flex-direction: column;
             gap: 15px;
@@ -177,6 +177,8 @@ DeviceFileEvents
             flex-direction: column;
             gap: 8px;
             width: 100%;
+            box-sizing: border-box;
+            padding: 0 20px;
         }
         
         .ah-section-label {
@@ -199,6 +201,7 @@ DeviceFileEvents
             font-size: 13px;
             resize: vertical;
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            box-sizing: border-box;
         }
         
         .ah-kvp-input:focus {
@@ -218,6 +221,8 @@ DeviceFileEvents
             border: 1px solid #2d4a5e;
             border-radius: 8px;
             overflow-y: auto;
+            width: 100%;
+            box-sizing: border-box;
         }
         
         .ah-results-empty {
