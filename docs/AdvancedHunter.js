@@ -643,10 +643,6 @@ DeviceFileEvents
         });
 
         document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                // Restore transform for future resizes/centering
-                modal.style.transform = '';
-            }
             isDragging = false;
         });
 
