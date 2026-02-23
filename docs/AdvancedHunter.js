@@ -189,11 +189,6 @@ DeviceFileEvents
             flex: 1 1 0;
             min-height: 0;
         }
-
-        .ah-section.results-section {
-            flex: 1 1 0;
-            min-height: 0;
-        }
         
         .ah-section-label {
             font-size: 13px;
