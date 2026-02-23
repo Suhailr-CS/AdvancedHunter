@@ -233,16 +233,6 @@ UrlClickEvents
     // ==========================================================================
     
     const STYLES = `
-        .ah-modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 999998;
-        }
-        
         .ah-modal {
             position: fixed;
             top: 50%;
@@ -634,11 +624,6 @@ UrlClickEvents
         styleEl.textContent = STYLES;
         document.head.appendChild(styleEl);
 
-        // Create overlay
-        const overlay = document.createElement('div');
-        overlay.className = 'ah-modal-overlay';
-        overlay.id = 'ah-overlay';
-
         // Create modal
         const modal = document.createElement('div');
         modal.className = 'ah-modal';
@@ -675,7 +660,6 @@ UrlClickEvents
             </div>
         `;
 
-        document.body.appendChild(overlay);
         document.body.appendChild(modal);
 
         // Initialize event handlers
@@ -745,12 +729,10 @@ UrlClickEvents
         const cancelBtn = document.getElementById('ah-cancel');
         const submitBtn = document.getElementById('ah-submit');
         const kvpInput = document.getElementById('ah-kvp-input');
-        const overlay = document.getElementById('ah-overlay');
 
         // Close handlers
         closeBtn.addEventListener('click', closeModal);
         cancelBtn.addEventListener('click', closeModal);
-        overlay.addEventListener('click', closeModal);
 
         // KVP input handler - real-time filtering
         kvpInput.addEventListener('input', () => {
@@ -838,11 +820,9 @@ UrlClickEvents
      */
     function closeModal() {
         const modal = document.getElementById('ah-modal');
-        const overlay = document.getElementById('ah-overlay');
         const styles = document.getElementById('ah-styles');
         
         if (modal) modal.remove();
-        if (overlay) overlay.remove();
         if (styles) styles.remove();
         
         selectedQuery = null;
