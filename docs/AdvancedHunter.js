@@ -176,6 +176,7 @@ DeviceFileEvents
             display: flex;
             flex-direction: column;
             gap: 8px;
+            width: 100%;
         }
         
         .ah-section-label {
@@ -497,7 +498,7 @@ DeviceFileEvents
                         placeholder="username=john.doe@contoso.com&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
                     ></textarea>
                 </div>
-                <div class="ah-section" style="flex: 1; min-height: 0;">
+                <div class="ah-section">
                     <label class="ah-section-label">Matching Queries</label>
                     <div class="ah-results-container" id="ah-results">
                         <div class="ah-results-empty">
