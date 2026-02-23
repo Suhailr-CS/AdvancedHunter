@@ -180,6 +180,11 @@ DeviceFileEvents
             box-sizing: border-box;
             padding: 0 20px;
         }
+
+        .ah-section.results-section {
+            flex: 1 1 0;
+            min-height: 0;
+        }
         
         .ah-section-label {
             font-size: 13px;
@@ -215,8 +220,8 @@ DeviceFileEvents
         }
         
         .ah-results-container {
-            flex: 1;
-            min-height: 120px;
+            flex: 1 1 0;
+            min-height: 0;
             background: #0a1628;
             border: 1px solid #2d4a5e;
             border-radius: 8px;
@@ -495,7 +500,7 @@ DeviceFileEvents
                 <button class="ah-close-btn" id="ah-close">×</button>
             </div>
             <div class="ah-body">
-                <div class="ah-section">
+                <div class="ah-section results-section">
                     <label class="ah-section-label">Key-Value Pairs (one per line)</label>
                     <textarea 
                         class="ah-kvp-input" 
