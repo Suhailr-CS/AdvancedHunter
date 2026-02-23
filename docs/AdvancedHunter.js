@@ -181,7 +181,8 @@ DeviceFileEvents
         }
 
         .ah-section.kvp-section {
-            flex: 0 0 auto;
+            flex: 1 1 0;
+            min-height: 0;
             margin-bottom: 0;
         }
 
@@ -200,7 +201,9 @@ DeviceFileEvents
         
         .ah-kvp-input {
             width: 100%;
-            height: 100px;
+            height: 100%;
+            min-height: 0;
+            flex: 1 1 0;
             padding: 12px;
             background: #0a1628;
             border: 1px solid #2d4a5e;
@@ -208,7 +211,7 @@ DeviceFileEvents
             color: #e0e0e0;
             font-family: 'Consolas', 'Monaco', monospace;
             font-size: 13px;
-            resize: vertical;
+            resize: none;
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
             box-sizing: border-box;
         }
