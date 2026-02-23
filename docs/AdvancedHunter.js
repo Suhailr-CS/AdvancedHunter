@@ -21,212 +21,11 @@
 (function() {
     'use strict';
 
-    // ==========================================================================
-    // QUERY LIBRARY - Add your KQL queries here
-    // ==========================================================================
-    // Each query has:
-    //   name: Human-readable query name
-    //   requiredKvps: Array of required KVP keys (use lowercase)
-    //   template: KQL query template with {{key}} placeholders
-    // ==========================================================================
-    
-    const QUERY_LIBRARY = [
-        {
-            name: "User Sign-in Activity",
-            requiredKvps: ["accountupn"],
-            template: `// Sign-in activity for user: {{accountupn}}
-IdentityLogonEvents
-| where AccountUpn =~ "{{accountupn}}" or AccountName =~ "{{accountupn}}"
-| project Timestamp, AccountUpn, AccountName, LogonType, DeviceName, IPAddress, Application
-| sort by Timestamp desc
-| take 100`
-        },
-        {
-            name: "IP Address Investigation",
-            requiredKvps: ["ipaddress"],
-            template: `// Network activity from IP: {{ipaddress}}
-DeviceNetworkEvents
-| where RemoteIP == "{{ipaddress}}" or LocalIP == "{{ipaddress}}"
-| project Timestamp, DeviceName, ActionType, RemoteIP, RemotePort, LocalIP, LocalPort, InitiatingProcessFileName
-| sort by Timestamp desc
-| take 100`
-        },
-        {
-            name: "Device Security Events",
-            requiredKvps: ["hostname"],
-            template: `// Security events for device: {{hostname}}
-DeviceEvents
-| where DeviceName =~ "{{hostname}}"
-| project Timestamp, DeviceName, ActionType, FileName, FolderPath, SHA256, InitiatingProcessFileName
-| sort by Timestamp desc
-| take 100`
-        },
-        {
-            name: "Email -> Find Similar Emails -> Find URL Clicks",
-            requiredKvps: ["networkmessageid"],
-            template: `// Find URL clicks from similar emails to NetworkMessageId: {{networkmessageid}}
-let NETWORKMESSAGEID = "{{networkmessageid}}";
-let ARRAY_FROM_TABLE_COLUMN = (TABLE: (*), COLUMN:string) {
-        set_difference(toscalar(TABLE | summarize make_set(column_ifexists(COLUMN, ""))), dynamic([""]))
-};
-let GET_SIMILAR_EMAILS = (NETWORKMESSAGEID: string) {
-    let Attributes = materialize (
-        EmailEvents
-        | where NetworkMessageId =~ NETWORKMESSAGEID
-        | distinct 
-            SenderMailFromAddress,
-            SenderMailFromDomain,
-            SenderDisplayName,
-            SenderFromAddress,
-            SenderFromDomain,
-            EmailClusterId,
-            Subject = tolower(Subject),
-            EmailSize
-        );
-    let INITIALSENDERMAILFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromAddress");
-    let INITIALSENDERMAILFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromDomain");
-    let INITIALSENDERDISPLAYNAMES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderDisplayName");
-    let INITIALSENDERFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromAddress");
-    let INITIALSENDERFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromDomain");
-    let INITIALEMAILCLUSTERIDS = ARRAY_FROM_TABLE_COLUMN(Attributes, "EmailClusterId");
-    let INITIALSUBJECTS = ARRAY_FROM_TABLE_COLUMN(Attributes, "Subject");
-    let AVGEMAILSIZE = tolong(toscalar(Attributes | summarize avg(EmailSize)));
-    let MINEMAILSIZE = 0.8*AVGEMAILSIZE;
-    let MAXEMAILSIZE = 1.2*AVGEMAILSIZE;
-    EmailEvents
-    | where 
-        SenderMailFromAddress in~ (INITIALSENDERMAILFROMADDRESSES) or
-        SenderMailFromDomain in~ (INITIALSENDERMAILFROMDOMAINS) or
-        SenderDisplayName in~ (INITIALSENDERDISPLAYNAMES) or
-        SenderFromAddress in~ (INITIALSENDERFROMADDRESSES) or
-        SenderFromDomain in~ (INITIALSENDERFROMDOMAINS) or
-        EmailClusterId in (INITIALEMAILCLUSTERIDS)
-    | where EmailSize between (MINEMAILSIZE .. MAXEMAILSIZE) and DeliveryLocation !~ "On-premises/external"
-    | extend InitialSubjects = INITIALSUBJECTS
-    | mv-expand InitialSubject = InitialSubjects
-    | extend InitialSubject = tostring(InitialSubject)
-    | where (jaccard_index(extract_all("([a-z]+)", tolower(Subject)), extract_all("([a-z]+)",InitialSubject)) > 0.5 or EmailClusterId in (INITIALEMAILCLUSTERIDS))
-    | project-away Initial*
-    | summarize arg_max(Timestamp, *) by NetworkMessageId, RecipientEmailAddress
-};
-GET_SIMILAR_EMAILS(NETWORKMESSAGEID)
-| join kind=rightsemi UrlClickEvents on NetworkMessageId`
-        },
-        {
-            name: "Email -> Find Similar Emails",
-            requiredKvps: ["networkmessageid"],
-            template: `// Find similar emails to NetworkMessageId: {{networkmessageid}}
-let NETWORKMESSAGEID = "{{networkmessageid}}";
-let ARRAY_FROM_TABLE_COLUMN = (TABLE: (*), COLUMN:string) {
-        set_difference(toscalar(TABLE | summarize make_set(column_ifexists(COLUMN, ""))), dynamic([""]))
-};
-let GET_SIMILAR_EMAILS = (NETWORKMESSAGEID: string) {
-    let Attributes = materialize (
-        EmailEvents
-        | where NetworkMessageId =~ NETWORKMESSAGEID
-        | distinct 
-            SenderMailFromAddress,
-            SenderMailFromDomain,
-            SenderDisplayName,
-            SenderFromAddress,
-            SenderFromDomain,
-            EmailClusterId,
-            Subject = tolower(Subject),
-            EmailSize
-        );
-    let INITIALSENDERMAILFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromAddress");
-    let INITIALSENDERMAILFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderMailFromDomain");
-    let INITIALSENDERDISPLAYNAMES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderDisplayName");
-    let INITIALSENDERFROMADDRESSES = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromAddress");
-    let INITIALSENDERFROMDOMAINS = ARRAY_FROM_TABLE_COLUMN(Attributes, "SenderFromDomain");
-    let INITIALEMAILCLUSTERIDS = ARRAY_FROM_TABLE_COLUMN(Attributes, "EmailClusterId");
-    let INITIALSUBJECTS = ARRAY_FROM_TABLE_COLUMN(Attributes, "Subject");
-    let AVGEMAILSIZE = tolong(toscalar(Attributes | summarize avg(EmailSize)));
-    let MINEMAILSIZE = 0.8*AVGEMAILSIZE;
-    let MAXEMAILSIZE = 1.2*AVGEMAILSIZE;
-    EmailEvents
-    | where 
-        SenderMailFromAddress in~ (INITIALSENDERMAILFROMADDRESSES) or
-        SenderMailFromDomain in~ (INITIALSENDERMAILFROMDOMAINS) or
-        SenderDisplayName in~ (INITIALSENDERDISPLAYNAMES) or
-        SenderFromAddress in~ (INITIALSENDERFROMADDRESSES) or
-        SenderFromDomain in~ (INITIALSENDERFROMDOMAINS) or
-        EmailClusterId in (INITIALEMAILCLUSTERIDS)
-    | where EmailSize between (MINEMAILSIZE .. MAXEMAILSIZE) and DeliveryLocation !~ "On-premises/external"
-    | extend InitialSubjects = INITIALSUBJECTS
-    | mv-expand InitialSubject = InitialSubjects
-    | extend InitialSubject = tostring(InitialSubject)
-    | where (jaccard_index(extract_all("([a-z]+)", tolower(Subject)), extract_all("([a-z]+)",InitialSubject)) > 0.5 or EmailClusterId in (INITIALEMAILCLUSTERIDS))
-    | project-away Initial*
-    | summarize arg_max(Timestamp, *) by NetworkMessageId, RecipientEmailAddress
-};
-GET_SIMILAR_EMAILS(NETWORKMESSAGEID)`
-        },
-        {
-            name: "Email -> Find DeviceFileEvents for Email Attachments",
-            requiredKvps: ["networkmessageid"],
-            template: `// Find DeviceFileEvents for email attachments from email with NetworkMessageId: {{networkmessageid}}
-let NETWORKMESSAGEID = "{{networkmessageid}}";
-let Lookup = (TABLE: (*), KEY:string, VALUE:string) {
-    TABLE
-    | where column_ifexists(KEY, "") =~ VALUE
-};
-let dynamicLookup = (SOURCE_TABLE: (*), TARGET_TABLE: (*), SOURCE_COLUMN:string, TARGET_COLUMN:string = "") {
-    let LOOKUPVALUES = set_difference(toscalar(SOURCE_TABLE | summarize make_set(column_ifexists(SOURCE_COLUMN, ""))), dynamic([""]));
-    TARGET_TABLE
-    | where column_ifexists(TARGET_COLUMN, "") in~ (LOOKUPVALUES) and isnotempty(column_ifexists(TARGET_COLUMN, ""))
-};
-dynamicLookup(
-Lookup(EmailAttachmentInfo, "NetworkMessageId", NETWORKMESSAGEID),
-DeviceFileEvents,
-"SHA256",
-"SHA256"
-)`
-        },
-        {
-            name: "Entra ID Protection Alert -> Potentially Related URL Clicks",
-            requiredKvps: ["alertid"],
-            template: `// Entra ID Protection Alert: {{alertid}}
-let ALERTID = "{{alertid}}";
-let ARRAY_FROM_TABLE_COLUMN = (TABLE: (*), COLUMN:string) {
-        set_difference(toscalar(TABLE | summarize make_set(column_ifexists(COLUMN, ""))), dynamic([""]))
-};
-let GET_ALERT_EVIDENCE = (ALERT_ID:string) {
-    AlertEvidence
-    | where AlertId endswith ALERT_ID
-    | extend AdditionalFields = todynamic(AdditionalFields)
-    | extend MergeByKeyHex = tostring(AdditionalFields.MergeByKeyHex)
-    | summarize arg_max(column_ifexists("TimeGenerated",Timestamp), *) by MergeByKeyHex
-    | evaluate bag_unpack(AdditionalFields, columnsConflict='keep_source')
-};
-let GET_ACCOUNT_IDENTIFIER = (ACCOUNT_OBJECT_ID:string, OUTPUT_COLUMN:string){toscalar(
-    IdentityInfo
-    | where AccountObjectId == ACCOUNT_OBJECT_ID and isnotempty(column_ifexists(OUTPUT_COLUMN,"")) and Timestamp > ago(14d)
-    | summarize arg_max(Timestamp,*) by AccountObjectId
-    | project column_ifexists(OUTPUT_COLUMN,""))
-};
-let ALERTEVIDENCE =     materialize(GET_ALERT_EVIDENCE(ALERTID));
-let SESSIONID =         tostring(ARRAY_FROM_TABLE_COLUMN((ALERTEVIDENCE),"SessionId")[0]);
-let REQUESTID =         tostring(ARRAY_FROM_TABLE_COLUMN((ALERTEVIDENCE),"RequestId")[0]);
-let ACCOUNTOBJECTID =   tostring(ARRAY_FROM_TABLE_COLUMN(ALERTEVIDENCE,"AccountObjectId")[0]);
-let ACCOUNTUPN =        GET_ACCOUNT_IDENTIFIER(ACCOUNTOBJECTID, "AccountUpn");
-let EMAILADDRESS =      GET_ACCOUNT_IDENTIFIER(ACCOUNTOBJECTID, "EmailAddress");
-let SUSPICIOUSSIGNINS = materialize(
-    EntraIdSignInEvents
-    | where AccountObjectId =~ ACCOUNTOBJECTID
-    | where
-        SessionId =~ SESSIONID or
-        RequestId =~ REQUESTID
-    | join kind=rightsemi EntraIdSignInEvents on CorrelationId
-);
-let MINSUSPICIOUSSIGNINTIMESTAMP = todatetime(toscalar(SUSPICIOUSSIGNINS | summarize min(Timestamp)));
-UrlClickEvents
-| where AccountUpn in~ (EMAILADDRESS, ACCOUNTUPN) and Timestamp between ((MINSUSPICIOUSSIGNINTIMESTAMP - 30m) .. MINSUSPICIOUSSIGNINTIMESTAMP)
-| summarize arg_max(Timestamp,*) by NetworkMessageId, Url
-| extend TimeDelta = MINSUSPICIOUSSIGNINTIMESTAMP - Timestamp
-| join kind=leftsemi (EmailEvents | where IsFirstContact) on NetworkMessageId`
-        }
-    ];
+    // ========================================================================== 
+    // QUERY LIBRARY - Loaded at runtime from external JSON
+    // ========================================================================== 
+    let QUERY_LIBRARY = null;
+    const QUERY_LIBRARY_URL = 'https://raw.githubusercontent.com/Suhailr-CS/AdvancedHunter/main/docs/QueryLibrary.json';
 
     // ==========================================================================
     // STYLES - Cybersecurity/SOAR themed color palette
@@ -523,16 +322,11 @@ UrlClickEvents
      * @returns {Array} - Array of matching query objects
      */
     function filterQueries(kvps) {
+        if (!QUERY_LIBRARY) return [];
         const kvpKeys = Object.keys(kvps);
-        
         return QUERY_LIBRARY.filter(query => {
-            // Queries with no required KVPs always match
             if (query.requiredKvps.length === 0) return true;
-            
-            // Check if all required KVPs are present
-            return query.requiredKvps.every(required => 
-                kvpKeys.includes(required.toLowerCase())
-            );
+            return query.requiredKvps.every(required => kvpKeys.includes(required.toLowerCase()));
         });
     }
 
@@ -648,8 +442,8 @@ UrlClickEvents
                 <div class="ah-section results-section">
                     <label class="ah-section-label">Matching Queries</label>
                     <div class="ah-results-container" id="ah-results">
-                        <div class="ah-results-empty">
-                            Enter KVPs above to see matching queries
+                        <div class="ah-results-empty" id="ah-loading-queries">
+                            Loading queries...
                         </div>
                     </div>
                 </div>
@@ -664,9 +458,6 @@ UrlClickEvents
 
         // Initialize event handlers
         initEventHandlers();
-        
-        // Show all queries initially (those with no required KVPs)
-        updateResults();
     }
 
     /**
@@ -674,8 +465,13 @@ UrlClickEvents
      */
     function updateResults() {
         const resultsContainer = document.getElementById('ah-results');
+        if (!QUERY_LIBRARY) {
+            resultsContainer.innerHTML = `<div class="ah-results-empty">Loading queries...</div>`;
+            selectedQuery = null;
+            updateSubmitButton();
+            return;
+        }
         const matchingQueries = filterQueries(currentKvps);
-        
         if (matchingQueries.length === 0) {
             resultsContainer.innerHTML = `
                 <div class="ah-results-empty">
@@ -686,27 +482,21 @@ UrlClickEvents
             updateSubmitButton();
             return;
         }
-
         resultsContainer.innerHTML = matchingQueries.map((query, index) => `
             <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}">
                 <div class="ah-query-name">${query.name}</div>
                 <div class="ah-query-kvps">Required: ${query.requiredKvps.length > 0 ? query.requiredKvps.join(', ') : 'None'}</div>
             </div>
         `).join('');
-
         // Add click handlers to query items
         resultsContainer.querySelectorAll('.ah-query-item').forEach(item => {
             item.addEventListener('click', () => {
-                // Remove selection from all items
                 resultsContainer.querySelectorAll('.ah-query-item').forEach(i => i.classList.remove('selected'));
-                // Select clicked item
                 item.classList.add('selected');
                 selectedQuery = QUERY_LIBRARY[parseInt(item.dataset.index)];
                 updateSubmitButton();
             });
         });
-
-        // Clear selection when results change
         selectedQuery = null;
         updateSubmitButton();
     }
@@ -840,5 +630,23 @@ UrlClickEvents
 
     // Create the modal
     createModal();
+
+    // Fetch the query library JSON
+    fetch(QUERY_LIBRARY_URL)
+        .then(response => {
+            if (!response.ok) throw new Error('Failed to load query library');
+            return response.json();
+        })
+        .then(data => {
+            QUERY_LIBRARY = data;
+            updateResults();
+        })
+        .catch(err => {
+            QUERY_LIBRARY = [];
+            const resultsContainer = document.getElementById('ah-results');
+            if (resultsContainer) {
+                resultsContainer.innerHTML = `<div class="ah-results-empty">Error loading queries.<br>${err.message}</div>`;
+            }
+        });
 
 })();
