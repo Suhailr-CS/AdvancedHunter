@@ -589,7 +589,15 @@
             const encodedQuery = await encodeQuery(finalQuery);
 
             // Get tenant ID from current URL
-            const tenantId = getTenantId();
+            let tenantId = getTenantId();
+            if (!tenantId) {
+                tenantId = prompt('Tenant ID (tid) parameter not found in the URL. Please enter your tenant ID:');
+                if (!tenantId) {
+                    submitBtn.textContent = 'Submit';
+                    submitBtn.disabled = false;
+                    return;
+                }
+            }
 
             // Build the new URL
             const newUrl = buildUrl(encodedQuery, tenantId);
