@@ -115,6 +115,10 @@ DeviceFileEvents
             color: #e0e0e0;
             overflow: hidden;
             resize: both;
+            display: flex;
+            flex-direction: column;
+            height: 600px;
+            max-height: 90vh;
         }
         
         .ah-header {
@@ -163,8 +167,9 @@ DeviceFileEvents
             display: flex;
             flex-direction: column;
             gap: 15px;
-            height: calc(100% - 130px);
-            overflow: hidden;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
         }
         
         .ah-section {
