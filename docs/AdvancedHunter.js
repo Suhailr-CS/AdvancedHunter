@@ -657,7 +657,7 @@ UrlClickEvents
                     <textarea 
                         class="ah-kvp-input" 
                         id="ah-kvp-input"
-                        placeholder="username=john.doe@contoso.com&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
+                        placeholder="alertid=adec1ab2064045c6edc926592925ec1c2827f3f8a&#10;networkmessageid=ef25129a-5f94-49f4-e131-08de6b7b6952&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
                     ></textarea>
                 </div>
                 <div class="ah-section results-section">
