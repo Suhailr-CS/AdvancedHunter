@@ -37,7 +37,7 @@
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            width: 600px;
+            width: 550px;
             min-width: 400px;
             min-height: 400px;
             background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 100%);
@@ -116,6 +116,7 @@
 
         .ah-section.kvp-section {
             flex: 1 1 0;
+            max-height: 30%;
             min-height: 0;
             margin-bottom: 0%;
         }
@@ -457,6 +458,7 @@
             </div>
             <div class="ah-footer">
                 <button class="ah-btn ah-btn-cancel" id="ah-cancel">Cancel</button>
+                <button class="ah-btn" id="ah-clear-kvp" style="background: transparent; border: 1px solid #5a6a7a; color: #e0e0e0;">Clear</button>
                 <button class="ah-btn ah-btn-submit" id="ah-submit" disabled>Submit</button>
             </div>
         `;
@@ -492,7 +494,7 @@
             return;
         }
         resultsContainer.innerHTML = matchingQueries.map((query, index) => `
-            <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}">
+            <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}" title="${query.description ? query.description.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''}">
                 <div class="ah-query-name">${query.name}</div>
                 <div class="ah-query-kvps">Required: ${query.requiredKvps.length > 0 ? query.requiredKvps.join(', ') : 'None'}</div>
             </div>
@@ -502,7 +504,21 @@
             item.addEventListener('click', () => {
                 resultsContainer.querySelectorAll('.ah-query-item').forEach(i => i.classList.remove('selected'));
                 item.classList.add('selected');
-                selectedQuery = QUERY_LIBRARY[parseInt(item.dataset.index)];
+                const newSelectedQuery = QUERY_LIBRARY[parseInt(item.dataset.index)];
+                const kvpInput = document.getElementById('ah-kvp-input');
+                const currentLines = kvpInput.value.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                const currentKeys = currentLines.map(line => line.split('=')[0].toLowerCase());
+                const newRequired = (newSelectedQuery.requiredKvps || []).map(k => k.toLowerCase());
+                let updatedLines = [...currentLines];
+                // Add any missing required keys
+                newRequired.forEach(key => {
+                    if (!currentKeys.includes(key)) {
+                        updatedLines.push(key + '=');
+                    }
+                });
+                kvpInput.value = updatedLines.join('\n');
+                currentKvps = parseKvps(kvpInput.value);
+                selectedQuery = newSelectedQuery;
                 updateSubmitButton();
             });
         });
@@ -515,6 +531,10 @@
      */
     function updateSubmitButton() {
         const submitBtn = document.getElementById('ah-submit');
+        const kvpInput = document.getElementById('ah-kvp-input');
+        const searchInput = document.getElementById('ah-query-search');
+        const clearBtn = document.getElementById('ah-clear-kvp');
+
         if (!selectedQuery) {
             submitBtn.disabled = true;
             return;
@@ -537,6 +557,7 @@
         const submitBtn = document.getElementById('ah-submit');
         const kvpInput = document.getElementById('ah-kvp-input');
         const searchInput = document.getElementById('ah-query-search');
+        const clearBtn = document.getElementById('ah-clear-kvp');
 
         // Close handlers
         closeBtn.addEventListener('click', closeModal);
@@ -552,6 +573,15 @@
         if (searchInput) {
             searchInput.addEventListener('input', () => {
                 updateResults();
+            });
+        }
+
+        // Clear button handler
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                kvpInput.value = '';
+                currentKvps = {};
+                updateSubmitButton();
             });
         }
 
