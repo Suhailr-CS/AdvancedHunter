@@ -135,7 +135,7 @@
         
         .ah-kvp-input {
             width: 100%;
-            height: 100%;
+            height: 96%;
             min-height: 0;
             flex: 1 1 0;
             padding: 12px;
