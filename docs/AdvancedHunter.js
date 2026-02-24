@@ -43,7 +43,7 @@
             background: linear-gradient(135deg, #0d1b2a 0%, #1b263b 100%);
             border: 1px solid #00d9ff;
             border-radius: 12px;
-            box-shadow: 0 0 30px rgba(0, 217, 255, 0.3), 0 10px 40px rgba(0, 0, 0, 0.5);
+            box-shadow: 0 0 20px rgba(0, 217, 255, 0.2), 0 10px 25px rgba(0, 0, 0, 0.1);
             z-index: 999999;
             font-family: 'Segoe UI', 'Roboto', sans-serif;
             color: #e0e0e0;
@@ -70,7 +70,7 @@
             font-size: 18px;
             font-weight: 600;
             color: #00d9ff;
-            text-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+            text-shadow: 0 0 10px rgba(0, 217, 255, 0.2);
             display: flex;
             align-items: center;
             gap: 10px;
@@ -117,12 +117,13 @@
         .ah-section.kvp-section {
             flex: 1 1 0;
             min-height: 0;
-            margin-bottom: 0;
+            margin-bottom: 0%;
         }
 
         .ah-section.results-section {
             flex: 1 1 0;
             min-height: 0;
+            margin-bottom: 2%;            
         }
         
         .ah-section-label {
@@ -321,13 +322,12 @@
      * @param {Object} kvps - Parsed KVPs object
      * @returns {Array} - Array of matching query objects
      */
-    function filterQueries(kvps) {
+    // No longer filter by KVPs; filtering is now by search bar (see below)
+    function filterQueriesByName(searchTerm) {
         if (!QUERY_LIBRARY) return [];
-        const kvpKeys = Object.keys(kvps);
-        return QUERY_LIBRARY.filter(query => {
-            if (query.requiredKvps.length === 0) return true;
-            return query.requiredKvps.every(required => kvpKeys.includes(required.toLowerCase()));
-        });
+        if (!searchTerm) return QUERY_LIBRARY;
+        const lower = searchTerm.toLowerCase();
+        return QUERY_LIBRARY.filter(query => query.name.toLowerCase().includes(lower));
     }
 
     /**
@@ -431,6 +431,21 @@
                 <button class="ah-close-btn" id="ah-close">×</button>
             </div>
             <div class="ah-body">
+                <div class="ah-section results-section">
+                    <label class="ah-section-label">Query Library</label>
+                    <input 
+                        type="text" 
+                        class="ah-query-search" 
+                        id="ah-query-search" 
+                        placeholder="Search queries by name..."
+                        style="margin-bottom: 10px; padding: 8px; border-radius: 6px; border: 1px solid #2d4a5e; background: #0a1628; color: #e0e0e0; font-size: 13px; width: 100%; box-sizing: border-box;"
+                    />
+                    <div class="ah-results-container" id="ah-results">
+                        <div class="ah-results-empty" id="ah-loading-queries">
+                            Loading queries...
+                        </div>
+                    </div>
+                </div>
                 <div class="ah-section kvp-section">
                     <label class="ah-section-label">Key-Value Pairs (one per line)</label>
                     <textarea 
@@ -438,14 +453,6 @@
                         id="ah-kvp-input"
                         placeholder="alertid=adec1ab2064045c6edc926592925ec1c2827f3f8a&#10;networkmessageid=ef25129a-5f94-49f4-e131-08de6b7b6952&#10;ipaddress=192.168.1.100&#10;hostname=WORKSTATION01"
                     ></textarea>
-                </div>
-                <div class="ah-section results-section">
-                    <label class="ah-section-label">Matching Queries</label>
-                    <div class="ah-results-container" id="ah-results">
-                        <div class="ah-results-empty" id="ah-loading-queries">
-                            Loading queries...
-                        </div>
-                    </div>
                 </div>
             </div>
             <div class="ah-footer">
@@ -465,17 +472,19 @@
      */
     function updateResults() {
         const resultsContainer = document.getElementById('ah-results');
+        const searchInput = document.getElementById('ah-query-search');
+        const searchTerm = searchInput ? searchInput.value : '';
         if (!QUERY_LIBRARY) {
             resultsContainer.innerHTML = `<div class="ah-results-empty">Loading queries...</div>`;
             selectedQuery = null;
             updateSubmitButton();
             return;
         }
-        const matchingQueries = filterQueries(currentKvps);
+        const matchingQueries = filterQueriesByName(searchTerm);
         if (matchingQueries.length === 0) {
             resultsContainer.innerHTML = `
                 <div class="ah-results-empty">
-                    No queries match the provided KVPs
+                    No queries found
                 </div>
             `;
             selectedQuery = null;
@@ -506,7 +515,15 @@
      */
     function updateSubmitButton() {
         const submitBtn = document.getElementById('ah-submit');
-        submitBtn.disabled = !selectedQuery;
+        if (!selectedQuery) {
+            submitBtn.disabled = true;
+            return;
+        }
+        // Check if all required KVPs are present
+        const required = selectedQuery.requiredKvps || [];
+        const kvpKeys = Object.keys(currentKvps);
+        const allPresent = required.every(key => kvpKeys.includes(key.toLowerCase()));
+        submitBtn.disabled = !allPresent;
     }
 
     /**
@@ -519,16 +536,24 @@
         const cancelBtn = document.getElementById('ah-cancel');
         const submitBtn = document.getElementById('ah-submit');
         const kvpInput = document.getElementById('ah-kvp-input');
+        const searchInput = document.getElementById('ah-query-search');
 
         // Close handlers
         closeBtn.addEventListener('click', closeModal);
         cancelBtn.addEventListener('click', closeModal);
 
-        // KVP input handler - real-time filtering
+        // KVP input handler - update KVPs but do not filter queries
         kvpInput.addEventListener('input', () => {
             currentKvps = parseKvps(kvpInput.value);
-            updateResults();
+            updateSubmitButton();
         });
+
+        // Search bar handler - filter queries by name
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                updateResults();
+            });
+        }
 
         // Submit handler
         submitBtn.addEventListener('click', handleSubmit);
