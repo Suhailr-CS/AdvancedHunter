@@ -493,12 +493,15 @@
             updateSubmitButton();
             return;
         }
-        resultsContainer.innerHTML = matchingQueries.map((query, index) => `
-            <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}" title="${query.description ? query.description.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''}">
-                <div class="ah-query-name">${query.name}</div>
-                <div class="ah-query-kvps">Required: ${query.requiredKvps.length > 0 ? query.requiredKvps.join(', ') : 'None'}</div>
-            </div>
-        `).join('');
+        resultsContainer.innerHTML = matchingQueries.map((query, index) => {
+            const optionalKvps = query.optionalKvps && query.optionalKvps.length > 0 ? query.optionalKvps.join(', ') : 'None';
+            return `
+                <div class="ah-query-item" data-index="${QUERY_LIBRARY.indexOf(query)}" title="${query.description ? query.description.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : ''}">
+                    <div class="ah-query-name">${query.name}</div>
+                    <div class="ah-query-kvps">Required: ${query.requiredKvps.length > 0 ? query.requiredKvps.join(', ') : 'None'}${optionalKvps !== 'None' ? ` | Optional: ${optionalKvps}` : ''}</div>
+                </div>
+            `;
+        }).join('');
         // Add click handlers to query items
         resultsContainer.querySelectorAll('.ah-query-item').forEach(item => {
             item.addEventListener('click', () => {
@@ -509,9 +512,16 @@
                 const currentLines = kvpInput.value.split('\n').map(line => line.trim()).filter(line => line.length > 0);
                 const currentKeys = currentLines.map(line => line.split('=')[0].toLowerCase());
                 const newRequired = (newSelectedQuery.requiredKvps || []).map(k => k.toLowerCase());
+                const newOptional = (newSelectedQuery.optionalKvps || []).map(k => k.toLowerCase());
                 let updatedLines = [...currentLines];
                 // Add any missing required keys
                 newRequired.forEach(key => {
+                    if (!currentKeys.includes(key)) {
+                        updatedLines.push(key + '=');
+                    }
+                });
+                // Add any missing optional keys
+                newOptional.forEach(key => {
                     if (!currentKeys.includes(key)) {
                         updatedLines.push(key + '=');
                     }
