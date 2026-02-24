@@ -1,21 +1,28 @@
 /**
  * AdvancedHunter.js - Microsoft Defender XDR Advanced Hunting Bookmarklet
- * 
- * This script creates a draggable, resizable modal interface for quickly
- * executing KQL queries with variable substitution in Microsoft Defender XDR.
- * 
- * USAGE:
- * 1. Host this file on GitHub Pages or any web server
- * 2. Use the loader bookmarklet to inject this script
- * 3. Enter key=value pairs (one per line)
- * 4. Select a matching query from the filtered list
- * 5. Click Submit to execute the query
- * 
- * ADDING NEW QUERIES:
- * Add entries to the QUERY_LIBRARY array below. Each query needs:
- *   - name: Display name for the query
+ *
+ * This script injects a modern, draggable, and resizable modal UI into Microsoft Defender XDR, enabling rapid execution of KQL queries with variable substitution.
+ *
+ * Features:
+ * - Loads a query library from an external JSON file (see QueryLibrary.json)
+ * - Search and filter queries by name
+ * - Displays required and optional key-value pairs (KVPs) for each query
+ * - Substitutes user-provided KVPs into query templates
+ * - Encodes and launches queries directly in Advanced Hunting with correct tenant context
+ * - Modern, accessible, and responsive UI with dark theme
+ *
+ * Usage:
+ * 1. Host this file and QueryLibrary.json on GitHub Pages or any web server
+ * 2. Use the provided bookmarklet to inject this script into Microsoft Defender XDR
+ * 3. Enter KVPs (one per line, e.g., alertid=...)
+ * 4. Search and select a query from the library
+ * 5. Click Submit to open the query in Advanced Hunting
+ *
+ * To add new queries, edit QueryLibrary.json. Each query requires:
+ *   - name: Display name
  *   - requiredKvps: Array of required KVP keys (lowercase)
- *   - template: KQL query with {{key}} placeholders for substitution
+ *   - optionalKvps: (optional) Array of optional KVP keys
+ *   - template: KQL query with {{key}} placeholders
  */
 
 (function() {
